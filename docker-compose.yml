@@ -1,0 +1,77 @@
+# syntax version.
+version: "3.7"
+
+
+networks:
+  backend:
+    driver: ${NETWORKS_DRIVER}
+  caddy:
+    external: true
+
+volumes:
+  caddy_data:
+    driver: local
+
+# services list.
+services:
+  caddy:
+    image: lucaslorentz/caddy-docker-proxy:ci-alpine
+    ports:
+      - 80:80
+      - 443:443
+    environment:
+      - CADDY_INGRESS_NETWORKS=caddy
+    networks:
+      - caddy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - caddy_data:/data
+    restart: unless-stopped
+
+  workspace:
+    build: ./workspace
+    volumes:
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+    networks:
+      - backend
+
+  web:
+    build: ./web
+    volumes:
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+    ports:
+      - ${HYPERF_PORT}:${HYPERF_PORT}
+    labels:
+      caddy: ${SITE_VIP}
+      caddy.reverse_proxy: "{{upstreams ${HYPERF_PORT}}}"
+# if your service no need redis, please comment out depends_on section
+    depends_on:
+      - redis
+    networks:
+      - backend
+      - caddy
+
+  redis:
+    build: ./redis
+    restart: always
+    volumes:
+      - ${DATA_PATH_HOST}/redis:/data
+      - ./redis/tmp/:/tmp
+    networks:
+      - backend
+  mariadb:
+    build:
+      context: ./mariadb
+      args:
+        - MARIADB_VERSION=${MARIADB_VERSION}
+    volumes:
+      - ${DATA_PATH_HOST}/mariadb:/var/lib/mysql
+      - ${MARIADB_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+    environment:
+      - TZ=${WORKSPACE_TIMEZONE}
+      - MYSQL_DATABASE=${MARIADB_DATABASE}
+      - MYSQL_USER=${MARIADB_USER}
+      - MYSQL_PASSWORD=${MARIADB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+    networks:
+      - backend
